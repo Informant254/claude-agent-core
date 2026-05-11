@@ -1,59 +1,47 @@
-from __future__ import annotations
-
-import json
-from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Set
-
-
-@dataclass(frozen=True)
-class PolicyDecision:
-    allowed: bool
-    reason: str
-    requires_confirmation: bool = False
-
+from dataclasses import dataclass
+from datetime import datetime
+import re
+import os
 
 @dataclass
+class PolicyDecision:
+    allowed: bool
+    reason: str = ""
+
 class ToolPolicy:
-    """Evaluate agent tool calls before any external side effect happens."""
+    def __init__(self):
+        self.blocked_patterns = [
+            r'(?i)ignore.*(previous|instructions|rules|policy)',
+            r'(?i)(developer|god|admin) mode',
+            r'(?i)jailbreak|dan|override',
+            r'(?i)base64|encoded|decode this',
+            r'(?i)disable.*policy|remove.*restriction',
+            r'(?i)(rm -rf|subprocess|shell|execute_system)',
+            r'(?i)/etc/|/root/|shadow|passwd',
+            r'(?i)create.*tool|meta.tool',
+        ]
+        os.makedirs('security_logs', exist_ok=True)
 
-    allowed_tools: Optional[Set[str]] = None
-    denied_tools: Set[str] = field(default_factory=set)
-    confirmation_required: Set[str] = field(default_factory=set)
-    max_argument_bytes: int = 8192
+    def require_allowed(self, input_text: str) -> PolicyDecision:
+        if not input_text:
+            return PolicyDecision(False, "Empty input")
+        
+        text = input_text.lower()
+        for pattern in self.blocked_patterns:
+            if re.search(pattern, text):
+                self._log_blocked_attempt(input_text, f"Matched pattern: {pattern}")
+                return PolicyDecision(False, f"Blocked by security policy: {pattern}")
+        return PolicyDecision(True)
 
-    def evaluate(self, tool_name: str, arguments: Mapping[str, Any]) -> PolicyDecision:
-        if not isinstance(tool_name, str) or not tool_name.strip():
-            return PolicyDecision(False, "tool_name must be a non-empty string")
-        if not isinstance(arguments, Mapping):
-            return PolicyDecision(False, "arguments must be a mapping")
-        if self.max_argument_bytes <= 0:
-            return PolicyDecision(False, "max_argument_bytes must be positive")
+    def _log_blocked_attempt(self, input_text: str, reason: str):
+        try:
+            os.makedirs('security_logs', exist_ok=True)
+            with open('security_logs/blocked_attempts.log', 'a', encoding='utf-8') as f:
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                f.write(f'[{timestamp}] BLOCKED | {reason}\nInput: {input_text[:500]}...\n---\n')
+        except:
+            pass
 
-        normalized_name = tool_name.strip()
-        if normalized_name in self.denied_tools:
-            return PolicyDecision(False, f"{normalized_name} is denied by policy")
-        if self.allowed_tools is not None and normalized_name not in self.allowed_tools:
-            return PolicyDecision(False, f"{normalized_name} is not in the allowed tool set")
-
-        argument_size = len(
-            json.dumps(arguments, sort_keys=True, default=str).encode("utf-8")
-        )
-        if argument_size > self.max_argument_bytes:
-            return PolicyDecision(
-                False,
-                f"arguments exceed {self.max_argument_bytes} bytes",
-            )
-
-        if normalized_name in self.confirmation_required:
-            return PolicyDecision(
-                True,
-                f"{normalized_name} requires human confirmation",
-                requires_confirmation=True,
-            )
-
-        return PolicyDecision(True, "allowed")
-
-    def require_allowed(self, tool_name: str, arguments: Mapping[str, Any]) -> None:
-        decision = self.evaluate(tool_name, arguments)
-        if not decision.allowed or decision.requires_confirmation:
-            raise PermissionError(decision.reason)
+    def check_tool_call(self, tool_name: str, args: dict) -> PolicyDecision:
+        combined = f'TOOL CALL: {tool_name} with {args}'
+        return self.require_allowed(combined)

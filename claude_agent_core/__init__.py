@@ -1,6 +1,6 @@
-from .agent import ClaudeAgent, AgentResponse
-from .client import ClaudeClient
+__version__ = "0.2.2"
+
+from .agent import ClaudeAgent
 from .policy import ToolPolicy, PolicyDecision
 
-__all__ = ["ClaudeAgent", "AgentResponse", "ClaudeClient", "ToolPolicy", "PolicyDecision"]
-__version__ = "0.1.1"
+__all__ = ["ClaudeAgent", "ToolPolicy", "PolicyDecision"]
